@@ -257,14 +257,14 @@ void ulp_riscv_i2c_master_set_slave_reg_addr(uint8_t slave_reg_addr)
  * | Slave  |        |         |  ACK   |        |   ACK  |        |         |   ACK  |  DATA  |        |  DATA  |        |        |
  * |--------|--------|---------|--------|--------|--------|--------|---------|--------|--------|--------|--------|--------|--------|
  */
-void ulp_riscv_i2c_master_read_from_device(uint8_t *data_rd, size_t size)
+esp_err_t ulp_riscv_i2c_master_read_from_device(uint8_t *data_rd, size_t size)
 {
     uint32_t i = 0;
     uint32_t cmd_idx = 0;
 
     if (size == 0) {
         // Quietly return
-        return;
+        return ESP_ERR_INVALID_SIZE;
     }
 
     /* By default, RTC I2C controller is hard wired to use CMD2 register onwards for read operations */
@@ -293,18 +293,34 @@ void ulp_riscv_i2c_master_read_from_device(uint8_t *data_rd, size_t size)
     /* Configure the RTC I2C controller in read mode */
     SET_PERI_REG_BITS(SENS_SAR_I2C_CTRL_REG, 0x1, 0, 27);
 
-    /* Enable Rx data interrupt */
+    /* Enable Rx data, ACK error, and timeout error interrupt */
     SET_PERI_REG_MASK(RTC_I2C_INT_ENA_REG, RTC_I2C_RX_DATA_INT_ENA);
+    SET_PERI_REG_MASK(RTC_I2C_INT_ENA_REG, RTC_I2C_ACK_ERR_INT_ENA);
+    SET_PERI_REG_MASK(RTC_I2C_INT_ENA_REG, RTC_I2C_TIMEOUT_INT_ENA);
 
     /* Start RTC I2C transmission */
     SET_PERI_REG_MASK(SENS_SAR_I2C_CTRL_REG, SENS_SAR_I2C_START_FORCE);
     SET_PERI_REG_MASK(SENS_SAR_I2C_CTRL_REG, SENS_SAR_I2C_START);
 
+    /* Clear the RTC I2C timeout and ACK error transmission bits */
+    SET_PERI_REG_MASK(RTC_I2C_INT_CLR_REG, RTC_I2C_ACK_ERR_INT_CLR);
+    SET_PERI_REG_MASK(RTC_I2C_INT_CLR_REG, RTC_I2C_TIMEOUT_INT_CLR);
+
     for (i = 0; i < size; i++) {
         /* Poll for RTC I2C Rx Data interrupt bit to be set */
-        while (!REG_GET_FIELD(RTC_I2C_INT_ST_REG, RTC_I2C_RX_DATA_INT_ST)) {
+        while (!(REG_GET_FIELD(RTC_I2C_INT_ST_REG, RTC_I2C_RX_DATA_INT_ST) || REG_GET_FIELD(RTC_I2C_INT_ST_REG, RTC_I2C_ACK_ERR_INT_ST) || REG_GET_FIELD(RTC_I2C_INT_ST_REG, RTC_I2C_TIMEOUT_INT_ST))) {
             /* Minimal delay to avoid hogging the CPU */
             vTaskDelay(1);
+        }
+
+        if (REG_GET_FIELD(RTC_I2C_INT_ST_REG, RTC_I2C_ACK_ERR_INT_ST) || REG_GET_FIELD(RTC_I2C_INT_ST_REG, RTC_I2C_TIMEOUT_INT_ST)){
+            
+            /* Clear the RTC I2C timeout and ACK error transmission bits */
+            SET_PERI_REG_MASK(RTC_I2C_INT_CLR_REG, RTC_I2C_ACK_ERR_INT_CLR);
+            SET_PERI_REG_MASK(RTC_I2C_INT_CLR_REG, RTC_I2C_TIMEOUT_INT_CLR);
+
+            data_rd[i] = 0;
+            break;
         }
 
         /* Read the data
@@ -326,6 +342,8 @@ void ulp_riscv_i2c_master_read_from_device(uint8_t *data_rd, size_t size)
     /* Clear the RTC I2C transmission bits */
     CLEAR_PERI_REG_MASK(SENS_SAR_I2C_CTRL_REG, SENS_SAR_I2C_START_FORCE);
     CLEAR_PERI_REG_MASK(SENS_SAR_I2C_CTRL_REG, SENS_SAR_I2C_START);
+
+    return ESP_OK;
 }
 
 /*
@@ -345,14 +363,14 @@ void ulp_riscv_i2c_master_read_from_device(uint8_t *data_rd, size_t size)
  * | Slave  |        |         |  ACK   |        |   ACK  |        |   ACK  |        |   ACK  |        |
  * |--------|--------|---------|--------|--------|--------|--------|--------|--------|--------|--------|
  */
-void ulp_riscv_i2c_master_write_to_device(uint8_t *data_wr, size_t size)
+esp_err_t ulp_riscv_i2c_master_write_to_device(uint8_t *data_wr, size_t size)
 {
     uint32_t i = 0;
     uint32_t cmd_idx = 0;
 
     if (size == 0) {
         // Quietly return
-        return;
+        return ESP_ERR_INVALID_SIZE;
     }
 
     /* By default, RTC I2C controller is hard wired to use CMD0 and CMD1 registers for write operations */
@@ -367,33 +385,44 @@ void ulp_riscv_i2c_master_write_to_device(uint8_t *data_wr, size_t size)
     /* Configure the RTC I2C controller in write mode */
     SET_PERI_REG_BITS(SENS_SAR_I2C_CTRL_REG, 0x1, 1, 27);
 
-    /* Enable Tx data interrupt */
+    /* Enable Tx data, ACK error, and timeout error interrupt */
     SET_PERI_REG_MASK(RTC_I2C_INT_ENA_REG, RTC_I2C_TX_DATA_INT_ENA);
+    SET_PERI_REG_MASK(RTC_I2C_INT_ENA_REG, RTC_I2C_ACK_ERR_INT_ENA);
+    SET_PERI_REG_MASK(RTC_I2C_INT_ENA_REG, RTC_I2C_TIMEOUT_INT_ENA);
 
     for (i = 0; i < size; i++) {
         /* Write the data to be transmitted */
         CLEAR_PERI_REG_MASK(SENS_SAR_I2C_CTRL_REG, I2C_CTRL_MASTER_TX_DATA_MASK);
         SET_PERI_REG_BITS(SENS_SAR_I2C_CTRL_REG, 0xFF, data_wr[i], 19);
-
-        if (i == 0) {
-            /* Start RTC I2C transmission. (Needn't do it for every byte) */
-            SET_PERI_REG_MASK(SENS_SAR_I2C_CTRL_REG, SENS_SAR_I2C_START_FORCE);
-            SET_PERI_REG_MASK(SENS_SAR_I2C_CTRL_REG, SENS_SAR_I2C_START);
         }
 
-        /* Poll for RTC I2C Tx Data interrupt bit to be set */
-        while (!REG_GET_FIELD(RTC_I2C_INT_ST_REG, RTC_I2C_TX_DATA_INT_ST)) {
-            /* Minimal delay to avoid hogging the CPU */
-            vTaskDelay(1);
-        }
 
-        /* Clear the Tx data interrupt bit */
-        SET_PERI_REG_MASK(RTC_I2C_INT_CLR_REG, RTC_I2C_TX_DATA_INT_CLR);
+    /* Start RTC I2C transmission. (Needn't do it for every byte) */
+    SET_PERI_REG_MASK(SENS_SAR_I2C_CTRL_REG, SENS_SAR_I2C_START_FORCE);
+    SET_PERI_REG_MASK(SENS_SAR_I2C_CTRL_REG, SENS_SAR_I2C_START);
+
+    /* Clear ACK and timeout error interrupt */
+    SET_PERI_REG_MASK(RTC_I2C_INT_CLR_REG, RTC_I2C_ACK_ERR_INT_CLR);
+    SET_PERI_REG_MASK(RTC_I2C_INT_CLR_REG, RTC_I2C_ACK_ERR_INT_CLR);
+
+    /* Poll for RTC I2C Tx Data interrupt bit to be set */
+    while (!(REG_GET_FIELD(RTC_I2C_INT_ST_REG, RTC_I2C_TX_DATA_INT_ST) || REG_GET_FIELD(RTC_I2C_INT_ST_REG, RTC_I2C_ACK_ERR_INT_ST) || REG_GET_FIELD(RTC_I2C_INT_ST_REG, RTC_I2C_TIMEOUT_INT_ST))) {
+        /* Minimal delay to avoid hogging the CPU */
+        vTaskDelay(1);
     }
+
+    /* Clear the Tx data interrupt bit */
+    SET_PERI_REG_MASK(RTC_I2C_INT_CLR_REG, RTC_I2C_TX_DATA_INT_CLR);
 
     /* Clear the RTC I2C transmission bits */
     CLEAR_PERI_REG_MASK(SENS_SAR_I2C_CTRL_REG, SENS_SAR_I2C_START_FORCE);
     CLEAR_PERI_REG_MASK(SENS_SAR_I2C_CTRL_REG, SENS_SAR_I2C_START);
+
+
+    ESP_RETURN_ON_FALSE(!REG_GET_FIELD(RTC_I2C_INT_ST_REG, RTC_I2C_ACK_ERR_INT_ST), ESP_ERR_INVALID_RESPONSE, RTCI2C_TAG, "RTC I2C Write ACK error");
+    ESP_RETURN_ON_FALSE(!REG_GET_FIELD(RTC_I2C_INT_ST_REG, RTC_I2C_TIMEOUT_INT_ST), ESP_ERR_TIMEOUT, RTCI2C_TAG, "RTC I2C Write Timeout error");
+
+    return ESP_OK;
 }
 
 esp_err_t ulp_riscv_i2c_master_init(const ulp_riscv_i2c_cfg_t *cfg)

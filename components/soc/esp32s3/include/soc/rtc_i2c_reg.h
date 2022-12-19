@@ -498,7 +498,7 @@ extern "C" {
 #define RTC_I2C_TIME_OUT_INT_ENA_V  0x00000001U
 #define RTC_I2C_TIME_OUT_INT_ENA_S  4
 /** RTC_I2C_ACK_ERR_INT_ENA : R/W; bitpos: [5]; default: 0;
- *  enable eack error interrupt
+ *  enable ack error interrupt
  */
 #define RTC_I2C_ACK_ERR_INT_ENA    (BIT(5))
 #define RTC_I2C_ACK_ERR_INT_ENA_M  (RTC_I2C_ACK_ERR_INT_ENA_V << RTC_I2C_ACK_ERR_INT_ENA_S)
